@@ -13,114 +13,102 @@ pipeline {
     triggers { pollSCM('* * * * *') }    
     stages {
 
-        stage("Get Binaries") {
-            when {
-                expression { params.RELEASE == false }
-            }            
-            steps {
-                script {
-                    BRANCH = BRANCH_NAME.replace('/','_')
-                }
-                withCredentials([usernamePassword(credentialsId: 'bc6e150e-ede8-4e35-8af4-0f037edee8ac', passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
-                    getBinaries(BRANCH,USERNAME,PASSWORD)
-                }
-            }
-        }
-
-
-        stage("Get Third Parties StandAlone") {    
-            when {
-                    expression { params.RELEASE == true }
-            }                                
-            steps {
-                dir("StandAlone") {
-                    getThirdParties('1.0.0')
-                }
-            }
-        }
+        stage("Get Third Parties StandAlone") {
+             steps {
+                 script {
+                     BRANCH = BRANCH_NAME.replace('/','_')
+                     dir("StandAlone") {
+                        version = getVersion()
+                     }      
+                 }
+                 withCredentials([string(credentialsId: 'artifactoryApiKey', variable: 'apiKey')]) {
+                    dir("StandAlone"){
+                        installRemaken(params.RELEASE,BRANCH,apiKey)
+                    }
+                 }
+             }
+        }   
 
         stage("Build StandAlone") {
-            steps {
-                withEnv(['REMAKEN_RULES_ROOT=/home/jenkins/.remaken/rules/']) {
-                    sh "qmake StandAlone/SolARNaturalImageMarkerStandAlone.pro"
-                    sh "make"
-                    sh "make install"
-                }
-            }
+             steps {
+                 dir("StandAlone") {
+                     build("")
+                 }
+             }
         }
 
-        stage("Build Debug StandAlone") {    
+        stage("Build Debug StandAlone") {
             when {
                 expression { params.RELEASE == true }
-            }                 
-            steps {
-                withEnv(['REMAKEN_RULES_ROOT=/home/jenkins/.remaken/rules/']) {
-                    sh "qmake StandAlone/SolARNaturalImageMarkerStandAlone.pro CONFIG+=debug"
-                    sh "make"
-                    sh "make install"
-                }
-            }
-        }
+            }            
+             steps {
+                 dir("StandAlone") {
+                     build("debug")
+                 }
+             }
+        }   
 
         stage("Get Third Parties Multithread") {
-            when {
-                    expression { params.RELEASE == true }
-            }                                      
-            steps {
-                dir("Multithread") {
-                    getThirdParties('1.0.0')
-                }
-            }
-        }
+             steps {
+                 script {
+                     BRANCH = BRANCH_NAME.replace('/','_')
+                     dir("Multithread") {
+                        version = getVersion()
+                     }      
+                 }
+                 withCredentials([string(credentialsId: 'artifactoryApiKey', variable: 'apiKey')]) {
+                    dir("Multithread"){
+                        installRemaken(params.RELEASE,BRANCH,apiKey)
+                    }
+                 }
+             }
+        }          
 
    
         stage("Build Multithread") {
-            steps {
-                withEnv(['REMAKEN_RULES_ROOT=/home/jenkins/.remaken/rules/']) {
-                    sh "qmake Multithread/SolARNaturalImageMarkerMT.pro"
-                    sh "make"
-                    sh "make install"
-                }
-            }
+             steps {
+                 dir("Multithread") {
+                     build("")
+                 }
+             }
         }
 
-        stage("Build Debug Multithread") {      
+        stage("Build Debug Multithread") {
             when {
                 expression { params.RELEASE == true }
-            }               
+            }            
+             steps {
+                 dir("Multithread") {
+                     build("debug")
+                 }
+             }
+        }
+
+        stage("Generate artifacts") {
             steps {
-                withEnv(['REMAKEN_RULES_ROOT=/home/jenkins/.remaken/rules/']) {
-                    sh "qmake Multithread/SolARNaturalImageMarkerMT.pro CONFIG+=debug"
-                    sh "make"
-                    sh "make install"
+                script {
+                     prepareRelease("SolARBuild","linux-gcc","PipelineNaturalImageMarker")               
                 }
             }
-        }         
+        }  
 
-        stage("Share Binaries") {
+        // Trigger only if not a RELEASE
+        stage("Upload to Artifactory") {
             when {
                 expression { params.RELEASE == false }
             }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'bc6e150e-ede8-4e35-8af4-0f037edee8ac', passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
-                    shareBinaries(BRANCH,USERNAME,PASSWORD)
+                    uploadArchive(BRANCH,"PipelineNaturalImageMarker/${version}/linux","${WORKSPACE}/artifactory/x86_64_shared_release/PipelineNaturalImageMarker_${version}_x86_64_shared_release.zip",USERNAME,PASSWORD)
                 }
             }
-        }           
+        }         
 
         stage("Release") {
             when {
                 expression { params.RELEASE == true }
             }
-            steps {
-                script {
-                    version = sh (
-                        script: "cat *.pro  | grep VERSION | head -1 | cut -d '=' -f 2",
-                        returnStdout: true
-                    )
-                    version = version.replace("\n","")
-                }                
-                prepareRelease("SolARBuild","linux-gcc","PipelineNaturalImageMarker")                
+            steps {                               
                 withCredentials([string(credentialsId: 'github-token', variable: 'token')]) {
                     release("NaturalImageMarker","PipelineNaturalImageMarker/${version}/linux","PipelineNaturalImageMarker Version ${version} for Linux","${WORKSPACE}/artifactory/x86_64_shared_release/PipelineNaturalImageMarker_${version}_x86_64_shared_release.zip ${WORKSPACE}/artifactory/x86_64_shared_debug/PipelineNaturalImageMarker_${version}_x86_64_shared_debug.zip",token);
                 }
